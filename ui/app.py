@@ -6,6 +6,13 @@ Streamlit dashboard for cardiovascular wellness monitoring.
 IMPORTANT: Educational demonstration only - NOT for clinical use.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to PYTHONPATH
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
 import streamlit as st
 
 from src.auth.simple_auth import require_authentication, logout

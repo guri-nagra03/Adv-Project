@@ -177,8 +177,12 @@ class FHIRClient:
         url = f"{self.base_url}/{resource_type}"
 
         try:
-            # Convert to dict for JSON serialization
-            resource_dict = resource.dict()
+            # Convert to JSON string (handles datetime serialization)
+            resource_json = resource.json()
+
+            # Parse back to dict for requests library
+            import json
+            resource_dict = json.loads(resource_json)
 
             # POST request
             response = self.session.post(

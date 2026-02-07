@@ -90,21 +90,36 @@ def train_model(
         f"(test_size={test_size})"
     )
 
+    # Clip extreme outliers to prevent numerical instability
+    # Use 99th percentile as upper bound, 1st percentile as lower bound
+    X_train_clipped = X_train.copy()
+    X_test_clipped = X_test.copy()
+
+    for col in X_train.columns:
+        lower_bound = X_train[col].quantile(0.01)
+        upper_bound = X_train[col].quantile(0.99)
+        X_train_clipped[col] = X_train[col].clip(lower_bound, upper_bound)
+        X_test_clipped[col] = X_test[col].clip(lower_bound, upper_bound)
+
+    logger.info("Clipped extreme outliers (1st-99th percentile)")
+
     # Scale features
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    X_train_scaled = scaler.fit_transform(X_train_clipped)
+    X_test_scaled = scaler.transform(X_test_clipped)
 
     logger.info("Features scaled using StandardScaler")
 
     # Create and train model
     if model_type == 'logistic':
         model = LogisticRegression(
-            multi_class='multinomial',
             solver='lbfgs',
             max_iter=settings.ML_MAX_ITER,
             random_state=random_state,
-            class_weight='balanced'  # Handle class imbalance
+            class_weight='balanced',  # Handle class imbalance
+            C=0.1,  # Strong regularization to prevent numerical instability (lower = stronger)
+            tol=1e-3,  # Slightly relaxed tolerance
+            warm_start=False
         )
     elif model_type == 'decision_tree':
         model = DecisionTreeClassifier(

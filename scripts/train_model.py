@@ -11,7 +11,7 @@ Complete end-to-end training pipeline for CardioGuard:
 7. Optionally post to FHIR server
 
 Usage:
-    python scripts/train_model.py [--no-fhir] [--limit N]
+    python scripts/train_model.py [--no-fhiro] [--limit N]
 
 Arguments:
     --no-fhir: Skip FHIR server operations (cache-only mode)
@@ -26,6 +26,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -221,16 +222,16 @@ def main():
         stratifier = RiskStratifier()
 
         # Get predictions
-        predictions = predictor.batch_predict(X)
-        print(f"✓ Generated {len(predictions['risk_scores'])} predictions")
+        predictions_df = predictor.predict_batch(X)
+        print(f"✓ Generated {len(predictions_df)} predictions")
 
         # Risk score distribution
         import numpy as np
         print(f"  Risk score statistics:")
-        print(f"    Mean: {np.mean(predictions['risk_scores']):.3f}")
-        print(f"    Median: {np.median(predictions['risk_scores']):.3f}")
-        print(f"    Min: {np.min(predictions['risk_scores']):.3f}")
-        print(f"    Max: {np.max(predictions['risk_scores']):.3f}")
+        print(f"    Mean: {np.mean(predictions_df['risk_score']):.3f}")
+        print(f"    Median: {np.median(predictions_df['risk_score']):.3f}")
+        print(f"    Min: {np.min(predictions_df['risk_score']):.3f}")
+        print(f"    Max: {np.max(predictions_df['risk_score']):.3f}")
 
     except Exception as e:
         logger.error(f"Prediction generation failed: {e}")
@@ -283,13 +284,15 @@ def main():
                 latest_features = patient_data.iloc[-1]
                 latest_date = latest_features['date']
 
-                # Get feature values for prediction
-                feature_values = latest_features[feature_cols].to_dict()
+                # Get all feature values for stratification (including additional features for override rules)
+                from src.utils.constants import ADDITIONAL_FEATURES
+                all_features_list = feature_cols + ADDITIONAL_FEATURES
+                feature_values = {k: latest_features.get(k, None) for k in all_features_list if k in latest_features.index}
 
-                # Predict
+                # Predict (using only ML training features)
                 prediction = predictor.predict(latest_features[feature_cols])
 
-                # Stratify
+                # Stratify (pass all features including additional ones for override rules)
                 stratification = stratifier.stratify(
                     ml_score=prediction['risk_score'],
                     features=feature_values,
@@ -312,20 +315,32 @@ def main():
                     # Create observations for available metrics
                     for metric_name in LOINC_CODES.keys():
                         if metric_name in latest_raw and pd.notna(latest_raw[metric_name]):
-                            obs = create_observation(
-                                user_id=patient_id,
-                                date=latest_date,
-                                metric_name=metric_name,
-                                value=latest_raw[metric_name]
-                            )
-                            observations.append(obs)
+                            try:
+                                # Convert to float and validate
+                                value = float(latest_raw[metric_name])
 
-                            observation_metadata.append({
-                                'metric_name': metric_name,
-                                'value': float(latest_raw[metric_name]),
-                                'unit': obs.valueQuantity.unit,
-                                'date': str(latest_date)
-                            })
+                                # Skip if value is NaN or infinite
+                                if not np.isfinite(value):
+                                    logger.debug(f"Skipping non-finite value for {metric_name}: {value}")
+                                    continue
+
+                                obs = create_observation(
+                                    user_id=patient_id,
+                                    date=latest_date,
+                                    metric_name=metric_name,
+                                    value=value
+                                )
+                                observations.append(obs)
+
+                                observation_metadata.append({
+                                    'metric_name': metric_name,
+                                    'value': value,
+                                    'unit': obs.valueQuantity.unit,
+                                    'date': str(latest_date)
+                                })
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Skipping invalid value for {metric_name}: {e}")
+                                continue
 
                 # Create RiskAssessment
                 risk_assessment = create_risk_assessment(

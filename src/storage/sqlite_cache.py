@@ -53,7 +53,7 @@ class SQLiteCache:
         Args:
             db_path: Path to SQLite database file
         """
-        self.db_path = db_path or settings.CACHE_DB_PATH
+        self.db_path = db_path or settings.SQLITE_DB_PATH
 
         # Ensure directory exists
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +65,7 @@ class SQLiteCache:
 
     def _init_db(self):
         """Initialize database schema if not exists."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         # Patients table
@@ -161,9 +161,17 @@ class SQLiteCache:
         logger.debug("Database schema initialized")
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get database connection."""
-        conn = sqlite3.connect(self.db_path)
+        """Get database connection with proper settings for concurrency."""
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=60.0,  # Wait up to 60 seconds for locks
+            check_same_thread=False,
+            isolation_level='DEFERRED'  # Use deferred transactions for better concurrency
+        )
         conn.row_factory = sqlite3.Row  # Enable column access by name
+        # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=60000")  # 60 second busy timeout
         return conn
 
     # =========================================================================
@@ -191,6 +199,9 @@ class SQLiteCache:
 
         now = datetime.now().isoformat()
 
+        # Ensure proper types
+        patient_id = int(patient_id)
+
         # Check if patient exists
         cursor.execute(
             "SELECT patient_id FROM patients WHERE patient_id = ?",
@@ -207,8 +218,11 @@ class SQLiteCache:
                     latest_ml_score = COALESCE(?, latest_ml_score),
                     metadata = COALESCE(?, metadata)
                 WHERE patient_id = ?
-            """, (now, latest_risk_level, latest_ml_score,
-                  json.dumps(metadata) if metadata else None, patient_id))
+            """, (now,
+                  str(latest_risk_level) if latest_risk_level else None,
+                  float(latest_ml_score) if latest_ml_score is not None else None,
+                  json.dumps(metadata) if metadata else None,
+                  patient_id))
         else:
             # Insert new
             cursor.execute("""
@@ -216,7 +230,9 @@ class SQLiteCache:
                     patient_id, first_seen_at, last_updated_at,
                     latest_risk_level, latest_ml_score, metadata
                 ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (patient_id, now, now, latest_risk_level, latest_ml_score,
+            """, (patient_id, now, now,
+                  str(latest_risk_level) if latest_risk_level else None,
+                  float(latest_ml_score) if latest_ml_score is not None else None,
                   json.dumps(metadata) if metadata else None))
 
         conn.commit()
@@ -305,7 +321,9 @@ class SQLiteCache:
                 feature_values, created_at
             ) VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            patient_id, ml_score, predicted_label,
+            int(patient_id),  # Ensure Python int
+            float(ml_score),  # Ensure Python float
+            str(predicted_label),
             json.dumps(probabilities),
             json.dumps(feature_values) if feature_values else None,
             now
@@ -318,7 +336,7 @@ class SQLiteCache:
             UPDATE patients
             SET last_updated_at = ?, latest_ml_score = ?
             WHERE patient_id = ?
-        """, (now, ml_score, patient_id))
+        """, (now, float(ml_score), int(patient_id)))
 
         conn.commit()
         conn.close()
@@ -435,8 +453,12 @@ class SQLiteCache:
                 risk_metadata, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            patient_id, risk_level, ml_score, threshold_based_level,
-            int(override_applied), override_reason,
+            int(patient_id),  # Ensure Python int
+            str(risk_level),
+            float(ml_score),  # Ensure Python float
+            str(threshold_based_level),
+            int(override_applied),
+            str(override_reason) if override_reason else None,
             json.dumps(recommendations) if recommendations else None,
             json.dumps(risk_metadata) if risk_metadata else None,
             now
@@ -449,7 +471,7 @@ class SQLiteCache:
             UPDATE patients
             SET last_updated_at = ?, latest_risk_level = ?
             WHERE patient_id = ?
-        """, (now, risk_level, patient_id))
+        """, (now, str(risk_level), int(patient_id)))
 
         conn.commit()
         conn.close()
@@ -566,8 +588,13 @@ class SQLiteCache:
                 observation_date, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            patient_id, fhir_resource_id, metric_name, value, unit,
-            observation_date, now
+            int(patient_id),  # Ensure Python int, not numpy int64
+            fhir_resource_id,
+            str(metric_name),
+            float(value),
+            str(unit) if unit else '',
+            str(observation_date),
+            now
         ))
 
         observation_id = cursor.lastrowid

@@ -103,6 +103,10 @@ def create_cardiovascular_features(
         min_days=min_days
     ).reset_index(drop=True)
 
+    # Calculate activity_score_percentile across all users
+    if 'activity_score' in df_features.columns:
+        df_features['activity_score_percentile'] = df_features['activity_score'].rank(pct=True) * 100
+
     # Remove rows with insufficient data
     initial_rows = len(df_features)
     df_features = df_features.dropna(subset=['activity_score', 'sleep_hours_avg'])
@@ -155,6 +159,13 @@ def _compute_user_features(user_df: pd.DataFrame, min_days: int) -> pd.DataFrame
     # 3. Sleep Hours (7-day rolling average)
     user_df['sleep_hours_avg'] = user_df['sleep_hours'].rolling(
         window=settings.ROLLING_WINDOW_SHORT,
+        min_periods=1
+    ).mean()
+    user_df['sleep_hours_avg_7d'] = user_df['sleep_hours_avg']  # Alias for risk rules
+
+    # 3b. Steps (30-day rolling average)
+    user_df['steps_avg_30d'] = user_df['steps'].rolling(
+        window=settings.ROLLING_WINDOW_LONG,
         min_periods=1
     ).mean()
 
@@ -216,10 +227,10 @@ def _estimate_resting_hr(hr_series: pd.Series, steps_series: pd.Series) -> pd.Se
         low_activity_hr = hr_series.where(low_activity_mask)
 
         # Forward fill resting HR estimate (carry forward last known resting HR)
-        resting_hr = low_activity_hr.fillna(method='ffill')
+        resting_hr = low_activity_hr.ffill()
 
         # Backward fill for initial missing values
-        resting_hr = resting_hr.fillna(method='bfill')
+        resting_hr = resting_hr.bfill()
 
         # If still missing, use overall median
         resting_hr = resting_hr.fillna(hr_series.median())

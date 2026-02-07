@@ -75,14 +75,23 @@ REQUIRED_COLUMNS = [
 ]
 
 # Feature Names (derived from feature engineering)
+# These are the primary features used for ML model training
 FEATURE_NAMES = [
     "resting_hr_estimate",
     "activity_score",
+    "activity_score_percentile",
     "sleep_hours_avg",
     "sedentary_ratio",
     "workout_consistency",
     "hr_variability_proxy",
     "mood_stress_ratio"
+]
+
+# Additional features created during feature engineering (not used for ML training)
+# These are used by override rules for risk stratification
+ADDITIONAL_FEATURES = [
+    "steps_avg_30d",
+    "sleep_hours_avg_7d"
 ]
 
 # Healthy Ranges (for feature interpretation)
