@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # HAPI FHIR Server - Primary data store for FHIR resources
+  fhir-server:
+    image: hapiproject/hapi:latest
+    container_name: cardioguard-fhir-server
+    ports:
+      - "8080:8080"
+    environment:
+      # FHIR version
+      - hapi.fhir.fhir_version=R4
+      - hapi.fhir.server_address=http://localhost:8080/fhir
+
+      # Enable CORS
+      - hapi.fhir.cors.allowed_origin=*
+      - hapi.fhir.allow_external_references=true
+
+      # Use in-memory H2 database for demo (data lost on restart)
+      # For persistent data, use PostgreSQL or MySQL
+      - spring.datasource.url=jdbc:h2:mem:testdb
+      - spring.datasource.driverClassName=org.h2.Driver
+      - spring.datasource.username=sa
+      - spring.datasource.password=
+
+      # JPA configuration
+      - spring.jpa.hibernate.ddl-auto=update
+      - hapi.fhir.tester_config.enabled=true
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/fhir/metadata"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    networks:
+      - cardioguard-network
+
+    restart: unless-stopped
+
+  # CardioGuard Application - Streamlit UI + ML Pipeline
+  cardioguard-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cardioguard-app
+    ports:
+      - "8501:8501"
+
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      # Mount models directory for trained models
+      - ./models:/app/models
+      # Mount config for easy updates without rebuild
+      - ./config:/app/config
+      # Mount logs
+      - ./logs:/app/logs
+
+    environment:
+      # FHIR server URL (internal Docker network)
+      - FHIR_SERVER_URL=http://fhir-server:8080/fhir
+
+      # Data paths
+      - DATASET_PATH=/app/data/raw/fitness_tracker_dataset.csv
+      - MODEL_PATH=/app/models/risk_classifier.pkl
+      - SCALER_PATH=/app/models/feature_scaler.pkl
+      - SQLITE_DB_PATH=/app/data/cache/cardioguard.db
+
+      # Data configuration
+      - DATA_LIMIT=10000
+      - RANDOM_SEED=42
+
+      # Risk thresholds
+      - RISK_THRESHOLD_LOW=0.33
+      - RISK_THRESHOLD_HIGH=0.66
+
+      # Logging
+      - LOG_LEVEL=INFO
+
+      # Skip config validation on startup (dataset may not be mounted yet)
+      - SKIP_CONFIG_VALIDATION=false
+
+    depends_on:
+      fhir-server:
+        condition: service_healthy
+
+    networks:
+      - cardioguard-network
+
+    restart: unless-stopped
+
+    command: >
+      sh -c "
+      echo 'Waiting for FHIR server to be ready...' &&
+      sleep 10 &&
+      streamlit run ui/app.py
+        --server.port=8501
+        --server.address=0.0.0.0
+        --server.headless=true
+        --browser.gatherUsageStats=false
+      "
+
+networks:
+  cardioguard-network:
+    driver: bridge
+    name: cardioguard-network
+
+# Optional: Add volumes for persistent data
+# Uncomment if you want data to persist across container restarts
+# volumes:
+#   fhir-data:
+#     driver: local
+#   cardioguard-cache:
+#     driver: local

@@ -1,0 +1,27 @@
+# Data Processing
+pandas==2.2.3
+numpy==1.26.4
+
+# Machine Learning
+scikit-learn==1.5.2
+shap==0.46.0
+
+# FHIR
+fhir.resources==7.1.0
+requests==2.32.3
+
+# Database
+sqlalchemy==2.0.35
+
+# UI
+streamlit==1.40.1
+plotly==5.24.1
+altair==5.4.1
+
+# Utilities
+pyyaml==6.0.2
+python-dotenv==1.0.1
+
+# Testing
+pytest==8.3.4
+pytest-mock==3.14.0
